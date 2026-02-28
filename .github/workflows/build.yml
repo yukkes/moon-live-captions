@@ -1,0 +1,108 @@
+name: Build MoonLiveCaptions
+
+# allow workflow to create releases via GITHUB_TOKEN
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: ['*']            # run whenever a tag is pushed (for releases)
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # ── 2. Download moonshine-voice wheel from PyPI ───────────────
+      #    The wheel (moonshine-voice==0.0.49, py3-none-win_amd64) contains
+      #    moonshine.dll and onnxruntime.dll. We download it here instead of
+      #    committing the native DLLs to the repository.
+      - name: Setup Python for wheel extraction
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Download moonshine-voice wheel
+        run: |
+          pip download "moonshine-voice==0.0.49" `
+            --no-deps `
+            --platform win_amd64 `
+            --only-binary :all: `
+            -d wheels/
+        shell: pwsh
+
+      # ── 3. Extract native DLLs from the wheel (zip format) ────────
+      - name: Extract DLLs
+        run: |
+          $whl = Get-ChildItem wheels/*.whl | Select-Object -First 1
+          if (-not $whl) { throw "No wheel file found in wheels/" }
+          Write-Output "Extracting: $($whl.FullName)"
+
+          # Rename .whl → .zip and expand
+          $zip = $whl.FullName -replace '\.whl$', '.zip'
+          Copy-Item $whl.FullName $zip
+          # older PowerShell versions on windows-latest use -DestinationPath instead
+          Expand-Archive -Path $zip -DestinationPath wheel_contents -Force
+
+          # Copy DLLs to the location expected by MoonLiveCaptions.csproj (lib folder at repo root)
+          $outDir = "lib"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Copy-Item "wheel_contents/moonshine_voice/moonshine.dll"    $outDir -Force
+          Copy-Item "wheel_contents/moonshine_voice/onnxruntime.dll"  $outDir -Force
+
+          Write-Output "Extracted DLLs:"
+          Get-ChildItem $outDir | Format-Table Name, Length -AutoSize
+        shell: pwsh
+
+      # ── 4. Build with .NET SDK ─────────────────────────────────────
+      #    windows-latest has .NET Framework 4.8.1 and the targeting pack.
+      #    The dotnet SDK can build net481 WPF projects on Windows.
+      - name: Restore NuGet packages
+        run: dotnet restore MoonLiveCaptions.csproj
+        shell: pwsh
+
+      - name: Build (Release)
+        run: |
+          dotnet build MoonLiveCaptions.csproj `
+            -c Release `
+            --no-restore `
+            -p:Platform=x64 `
+            -p:OutputPath="bin\Release\net481"
+        shell: pwsh
+
+      # ── 5. Package outputs into a zip ──────────────────────────────
+      - name: Create zip package
+        run: |
+          $outDir = "bin\Release\net481"
+          $zipFile = Join-Path $outDir "MoonLiveCaptions.zip"
+          Compress-Archive -Path `
+            "$outDir\MoonLiveCaptions.exe", `
+            "$outDir\moonshine.dll", `
+            "$outDir\onnxruntime.dll", `
+            "$outDir\MoonLiveCaptions.exe.config" `
+            -DestinationPath $zipFile -Force
+          Write-Output "Created package: $zipFile"
+        shell: pwsh
+
+      # ── 6. Create GitHub Release (tag-triggered builds) ───────────
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: "Automatically generated release from tag ${{ github.ref_name }}"
+          # allow overwriting an existing release (update assets/body)
+          allowUpdates: true
+          # automatically remove previous artifacts when updating
+          removeArtifacts: true
+          # attach the zip package created earlier
+          artifacts: "bin/Release/net481/MoonLiveCaptions.zip"
