@@ -35,6 +35,12 @@ namespace MoonLiveCaptions
 
             DataContext = _vm;
 
+            // Restore saved window position/size
+            _savedLeft   = AppSettings.WindowLeft;
+            _savedTop    = AppSettings.WindowTop;
+            _savedWidth  = double.IsNaN(AppSettings.WindowWidth)  ? 720 : AppSettings.WindowWidth;
+            _savedHeight = double.IsNaN(AppSettings.WindowHeight) ? 190 : AppSettings.WindowHeight;
+
             Loaded   += OnLoaded;
             Closing  += OnClosing;
             SizeChanged += OnSizeChanged;
@@ -52,6 +58,13 @@ namespace MoonLiveCaptions
 
         private void OnClosing(object sender, System.ComponentModel.CancelEventArgs e)
         {
+            // Persist window position/size
+            AppSettings.WindowLeft   = _savedLeft;
+            AppSettings.WindowTop    = _savedTop;
+            AppSettings.WindowWidth  = _savedWidth;
+            AppSettings.WindowHeight = _savedHeight;
+            AppSettings.Save();
+
             _appBar?.Dispose();
             _vm?.Dispose();
         }

@@ -6,6 +6,7 @@ using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Threading.Tasks;
+using MoonLiveCaptions.Helpers;
 using MoonLiveCaptions.Native;
 
 namespace MoonLiveCaptions.Services
@@ -47,7 +48,7 @@ namespace MoonLiveCaptions.Services
                 StatusChanged?.Invoke(this, "モデルを準備中...");
 
                 string modelDir = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory, "Models",
+                    AppSettings.ModelsDir,
                     string.Format("moonshine-{0}", language));
 
                 _currentModelArch = MoonshineNative.MODEL_ARCH_BASE;

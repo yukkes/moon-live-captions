@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
+using MoonLiveCaptions.Helpers;
 
 namespace MoonLiveCaptions
 {
@@ -12,6 +13,10 @@ namespace MoonLiveCaptions
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // Ensure %LOCALAPPDATA%\MoonLiveCaptions\ directories exist and load settings
+            AppSettings.EnsureDirectories();
+            AppSettings.Load();
 
             // Catch exceptions on the UI thread
             DispatcherUnhandledException += OnDispatcherUnhandledException;
@@ -48,8 +53,10 @@ namespace MoonLiveCaptions
         {
             try
             {
+                AppSettings.EnsureDirectories();
                 string logPath = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "MoonLiveCaptions",
                     "crash_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".txt");
                 File.WriteAllText(logPath,
                     "MoonLiveCaptions crash log\r\n" +
@@ -63,9 +70,15 @@ namespace MoonLiveCaptions
         {
             try
             {
+                // Use language-appropriate message if settings already loaded
+                bool isJa = AppSettings.UILanguage != "en";
+                string title = isJa ? "MoonLiveCaptions エラー" : "MoonLiveCaptions Error";
+                string body  = isJa
+                    ? "エラーが発生しました:\n\n" + ex.Message
+                    : "An error occurred:\n\n" + ex.Message;
                 MessageBox.Show(
-                    "エラーが発生しました:\n\n" + ex.Message,
-                    "MoonLiveCaptions エラー",
+                    body,
+                    title,
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
             }

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using MoonLiveCaptions.Helpers;
 using MoonLiveCaptions.Native;
 using MoonLiveCaptions.Services;
 using NAudio.Wave;
@@ -94,6 +95,9 @@ namespace MoonLiveCaptions.ViewModels
             };
             _selectedLanguage = Languages[0];
 
+            // Apply persisted settings (must happen after Languages list is built)
+            ApplySettings();
+
             ToggleSettingsCommand = new RelayCommand(() => IsSettingsOpen = !IsSettingsOpen);
             CloseCommand          = new RelayCommand(() => CloseRequested?.Invoke(this, EventArgs.Empty));
             SetDisplayModeCommand = new RelayCommand<string>(m =>
@@ -131,6 +135,7 @@ namespace MoonLiveCaptions.ViewModels
                 {
                     DisplayModeChanged?.Invoke(this, value);
                     OnPropertyChanged(nameof(IsFloating));
+                    SaveSettings();
                 }
             }
         }
@@ -141,14 +146,14 @@ namespace MoonLiveCaptions.ViewModels
         public bool CaptureSystemAudio
         {
             get => _captureSystemAudio;
-            set { if (SetProperty(ref _captureSystemAudio, value)) RestartCapture(); }
+            set { if (SetProperty(ref _captureSystemAudio, value)) { RestartCapture(); SaveSettings(); } }
         }
 
         private bool _captureMicrophone;
         public bool CaptureMicrophone
         {
             get => _captureMicrophone;
-            set { if (SetProperty(ref _captureMicrophone, value)) RestartCapture(); }
+            set { if (SetProperty(ref _captureMicrophone, value)) { RestartCapture(); SaveSettings(); } }
         }
 
         // ══════════════════════════════════════════════════════════
@@ -159,7 +164,14 @@ namespace MoonLiveCaptions.ViewModels
         public FontSizeOption CurrentFontSize
         {
             get => _fontSize;
-            set { if (SetProperty(ref _fontSize, value)) OnPropertyChanged(nameof(CaptionFontSize)); }
+            set
+            {
+                if (SetProperty(ref _fontSize, value))
+                {
+                    OnPropertyChanged(nameof(CaptionFontSize));
+                    SaveSettings();
+                }
+            }
         }
 
         public double CaptionFontSize
@@ -193,6 +205,7 @@ namespace MoonLiveCaptions.ViewModels
                     OnPropertyChanged(nameof(ForegroundBrush));
                     OnPropertyChanged(nameof(SeparatorBrush));
                     OnPropertyChanged(nameof(DragPillBrush));
+                    SaveSettings();
                 }
             }
         }
@@ -201,7 +214,14 @@ namespace MoonLiveCaptions.ViewModels
         public double BackgroundOpacity
         {
             get => _backgroundOpacity;
-            set { if (SetProperty(ref _backgroundOpacity, value)) OnPropertyChanged(nameof(BackgroundBrush)); }
+            set
+            {
+                if (SetProperty(ref _backgroundOpacity, value))
+                {
+                    OnPropertyChanged(nameof(BackgroundBrush));
+                    SaveSettings();
+                }
+            }
         }
 
         public SolidColorBrush BackgroundBrush
@@ -246,6 +266,7 @@ namespace MoonLiveCaptions.ViewModels
                     OnPropertyChanged(nameof(UILanguage));
                     OnPropertyChanged(nameof(UI));
                     OnPropertyChanged(nameof(PlaceholderText));
+                    SaveSettings();
                 }
             }
         }
@@ -347,7 +368,14 @@ namespace MoonLiveCaptions.ViewModels
         public LanguageChoice SelectedLanguage
         {
             get => _selectedLanguage;
-            set { if (SetProperty(ref _selectedLanguage, value)) OnPropertyChanged(nameof(PlaceholderText)); }
+            set
+            {
+                if (SetProperty(ref _selectedLanguage, value))
+                {
+                    OnPropertyChanged(nameof(PlaceholderText));
+                    SaveSettings();
+                }
+            }
         }
 
         // ══════════════════════════════════════════════════════════
@@ -365,6 +393,62 @@ namespace MoonLiveCaptions.ViewModels
         // ══════════════════════════════════════════════════════════
         // Initialization
         // ══════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════
+        // Settings persistence
+        // ════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Read AppSettings and apply them to private fields.
+        /// Called once at construction time, after the Languages list is built.
+        /// </summary>
+        private void ApplySettings()
+        {
+            // UI language: use saved value, or auto-detect from Windows on first run
+            string savedLang = AppSettings.UILanguage;
+            if (!string.IsNullOrEmpty(savedLang) && Enum.TryParse(savedLang, out UILang ul))
+            {
+                _uiLang = ul;
+            }
+            else
+            {
+                string detected = AppSettings.DetectWindowsUILanguage();
+                _uiLang = detected == "ja" ? UILang.ja : UILang.en;
+            }
+            _ui = new UIStringsProvider(_uiLang);
+
+            if (Enum.TryParse(AppSettings.DisplayMode, out DisplayMode dm))
+                _displayMode = dm;
+
+            if (Enum.TryParse(AppSettings.FontSize, out FontSizeOption fs))
+                _fontSize = fs;
+
+            if (Enum.TryParse(AppSettings.Theme, out CaptionTheme ct))
+                _theme = ct;
+
+            _backgroundOpacity  = AppSettings.BackgroundOpacity;
+            _captureSystemAudio = AppSettings.CaptureSystemAudio;
+            _captureMicrophone  = AppSettings.CaptureMicrophone;
+
+            var langChoice = Languages.FirstOrDefault(l => l.Code == AppSettings.TranscriptionLang);
+            if (langChoice != null) _selectedLanguage = langChoice;
+        }
+
+        /// <summary>
+        /// Copy current state to AppSettings and flush to disk.
+        /// </summary>
+        private void SaveSettings()
+        {
+            AppSettings.UILanguage         = _uiLang.ToString();
+            AppSettings.DisplayMode        = _displayMode.ToString();
+            AppSettings.FontSize           = _fontSize.ToString();
+            AppSettings.Theme              = _theme.ToString();
+            AppSettings.BackgroundOpacity  = _backgroundOpacity;
+            AppSettings.CaptureSystemAudio = _captureSystemAudio;
+            AppSettings.CaptureMicrophone  = _captureMicrophone;
+            AppSettings.TranscriptionLang  = _selectedLanguage?.Code ?? "ja";
+            AppSettings.Save();
+        }
 
         private async Task InitializeAndStartAsync()
         {
@@ -426,8 +510,7 @@ namespace MoonLiveCaptions.ViewModels
             try
             {
                 _sessionDirectory = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    "Recordings",
+                    AppSettings.RecordingsDir,
                     DateTime.Now.ToString("yyyyMMdd_HHmmss"));
                 Directory.CreateDirectory(_sessionDirectory);
 
